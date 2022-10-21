@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 set -o nounset
 
@@ -32,9 +32,14 @@ prefix=''
 
 usage(){
 	cat >&2 <<-FIN
-	usage: ${PROGNAME} [-C CONF] [-R REPO] [-P PREFIX] [-w DATE] [-c DATE] [ -h -v ]
+	usage: ${PROGNAME} [-C CONF] [-R REPO] [-D REPO_DIRS] [-P PREFIX] [-w DATE] [-c DATE] [ -h -v ]
 
 	REPO: borg repo-url
+	      Mutually exclusive of REPO_DIRS
+	REPO_DIRS: Comma delimited list of directories to check
+	           Or a shell glob pattern. Eg: /backups/*/*
+	           For local repos only.
+	           Mutually exclusive of REPO
 	DATE: Any valid date for the date-command.
 	      default for -w: "${warn}"
 	      default for -c: "${crit}"
@@ -58,7 +63,11 @@ command -v "${BORG}" >/dev/null 2>/dev/null \
 command -v "${DATE}" >/dev/null 2>/dev/null \
 	|| error "No command '${DATE}' available."
 
-while getopts ":vhR:P:C:c:w:" opt; do
+
+BORG_REPO=""
+REPO_DIRS=""
+
+while getopts ":vhR:D:P:C:c:w:" opt; do
 	case "${opt}" in
 		v)
 			verbose=$((verbose + 1))
@@ -68,6 +77,9 @@ while getopts ":vhR:P:C:c:w:" opt; do
 			;;
 		R)
 			export "BORG_REPO=${OPTARG}"
+			;;
+		D)
+			export "REPO_DIRS=${OPTARG}"
 			;;
 		P)
 			prefix="${OPTARG}"
@@ -94,10 +106,16 @@ while getopts ":vhR:P:C:c:w:" opt; do
 	esac
 done
 
-if [ -z "${BORG_REPO:-""}" ]; then
+if [ -z "${REPO_DIRS}" -a -z "${BORG_REPO}" ]; then
 	error "No repository specified!"
 fi
-verbose "repo ${BORG_REPO}"
+
+if [ -n "${BORG_REPO}" -a -n "${REPO_DIRS}" ] ; then
+    error "Options -R and -D are mutually exclusive!"
+fi
+
+[ -n "${BORG_REPO}" ] && verbose "repo ${BORG_REPO}"
+[ -n "${REPO_DIRS}" ] && verbose "repo dirs ${REPO_DIRS}" 
 
 # convert values to seconds to enable comparison
 sec_warn="$(${DATE} --date="${warn}" '+%s')"
@@ -108,44 +126,41 @@ if check_range "${sec_crit}" 0:"${sec_warn}" ; then
 	error "Warning value has to be a more recent timepoint than critical."
 fi
 
-# get unixtime of last backup
-# As there are easier and safer ways to get the latest time stamp in the current borg version,
-# use the ugly ones only when necessary
-case "$(${BORG} --version | cut -d' ' -f2)" in
-	1.0*)
-		# Get the archive names and then get via borg info the date for the latest archive name
-		# We have to split the pipe chains, as we have to catch if borg failed to execute
-		last_archive="$(${BORG} list --short)"
-		[ "$?" = 0 ] || error "Cannot list repository archives. Repo Locked?"
-		last_archive="$(echo "${last_archive}" | tail -n 1)"
-		last="$(${BORG} info "::${last_archive}")"
-		[ "$?" = 0 ] || error "Cannot get archive info for '${last_archive}'. Repo Locked?"
-		last="$(echo "${last}" | sed -n 's/^Time (start):\s\(.*\)/\1/p')"
-		;;
-	*)
-		last="$(${BORG} list --prefix "${prefix}" --sort timestamp --last 1 --format '{time}')"
-		[ "$?" = 0 ] || error "Cannot list repository archives. Repo Locked?"
-		;;
-esac
+ok_msg=""
+crit_msg=""
+warn_msg=""
+worst_code="0"
 
-if [ -z "${last}" ]; then
-	echo "BORG CRITICAL, no archive in repository"
-	exit "${STATE_CRITICAL}"
-fi
+function check_last {
+    last="$(${BORG} list  --glob-archives "${prefix}*" --sort timestamp --last 1 --format '{time}')"
+	[ "$?" = 0 ] || error "Cannot list repository archives. Repo Locked?"
+	if [ -z "${last}" ]; then
+		crit_msg="CRIT: No archive in repository $BORG_REPO\n$crit_msg"
+		worst_code=${STATE_CRITICAL}
+	fi
+	sec_last="$(${DATE} --date="${last}" '+%s')"
 
-sec_last="$(${DATE} --date="${last}" '+%s')"
+	if [ "${sec_crit}" -gt "${sec_last}" ]; then
+		worst_code="${STATE_CRITICAL}"
+		crit_msg="CRIT: Last backup made of $BORG_REPO on ${last}\n$crit_msg"
+	elif [ "${sec_warn}" -gt "${sec_last}" ]; then
+		[ $worst_code -lt ${STATE_WARNING} ] && worst_code="${STATE_WARNING}"
+		warn_msg="WARN: Last backup made of $BORG_REPO on ${last}\n$warn_msg"
+	else
+		ok_msg="OK: Last backup made of $BORG_REPO on ${last}\n$ok_msg"
+	fi
+}
 
-# interpret the amount of fails
-if [ "${sec_crit}" -gt "${sec_last}" ]; then
-	state="${STATE_CRITICAL}"
-	msg="BORG CRITICAL, last backup made on ${last}"
-elif [ "${sec_warn}" -gt "${sec_last}" ]; then
-	state="${STATE_WARNING}"
-	msg="BORG WARN, last backup made on ${last}"
+if [ -n "${BORG_REPO}" ] ; then
+    check_last
 else
-	state="${STATE_OK}"
-	msg="BORG OK, last backup made on ${last}"
+    repo_list=`echo ${REPO_DIRS} | tr , ' ' `
+    for BORG_REPO in $repo_list ; do
+        export BORG_REPO
+        check_last
+        echo worst_code=$worst_code
+    done
 fi
 
-echo "${msg}"
-exit "${state}"
+echo -e "$worst_code: $crit_msg$warn_msg$ok_msg"
+exit $worst_code
