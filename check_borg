@@ -5,6 +5,8 @@ set -o nounset
 PROGNAME=$(basename "$0")
 PROGPATH=$(echo "$0" | sed -e 's,[\\/][^\\/][^\\/]*$,,')
 
+export BORG_RELOCATED_REPO_ACCESS_IS_OK=yes
+
 # source a utils.sh from nagios-plugins
 # if the check is not executed in the normal check-directory,
 # we'll search on common places. This gives us the ability to
@@ -22,7 +24,6 @@ fi
 
 debug(){   ([ "${verbose}" -gt 1 ] && echo "$*") || return 0; }
 verbose(){ ([ "${verbose}" -gt 0 ] && echo "$*") || return 0; }
-
 error(){   echo "BORG UNKNOWN, $*"; exit "${STATE_UNKNOWN}"; }
 
 crit='7 days ago'
@@ -79,7 +80,7 @@ while getopts ":vhR:D:P:C:c:w:" opt; do
 			export "BORG_REPO=${OPTARG}"
 			;;
 		D)
-			export "REPO_DIRS=${OPTARG}"
+			REPO_DIRS=${OPTARG}
 			;;
 		P)
 			prefix="${OPTARG}"
@@ -123,7 +124,7 @@ sec_crit="$(${DATE} --date="${crit}" '+%s')"
 
 # check warning and critical values
 if check_range "${sec_crit}" 0:"${sec_warn}" ; then
-	error "Warning value has to be a more recent timepoint than critical."
+	error "Warning value has to be a more recent timepoint than critical value."
 fi
 
 ok_msg=""
@@ -158,7 +159,6 @@ else
     for BORG_REPO in $repo_list ; do
         export BORG_REPO
         check_last
-        echo worst_code=$worst_code
     done
 fi
 
