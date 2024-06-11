@@ -33,7 +33,7 @@ prefix=''
 
 usage(){
 	cat >&2 <<-FIN
-	usage: ${PROGNAME} [-C CONF] [-R REPO] [-D REPO_DIRS] [-P PREFIX] [-w DATE] [-c DATE] [ -h -v ]
+	usage: ${PROGNAME} [-C CONF] [-R REPO] [-D REPO_DIRS] [-E EXCLUDE_DIRS ] [-P PREFIX] [-w DATE] [-c DATE] [ -h -v ]
 
 	REPO: borg repo-url
 	      Mutually exclusive of REPO_DIRS
@@ -41,6 +41,9 @@ usage(){
 	           Or a shell glob pattern. Eg: /backups/*/*
 	           For local repos only.
 	           Mutually exclusive of REPO
+	EXCLUDE_DIRS: A Regex of repo directories from REPO_DIRS
+	              To be ignored. Example:
+	              '^/backup/old|/backup/test$'
 	DATE: Any valid date for the date-command.
 	      default for -w: "${warn}"
 	      default for -c: "${crit}"
@@ -48,6 +51,8 @@ usage(){
 	      can use this to set the necessary env variables.
 	PREFIX: Only archives that start with this prefix are
           considered. (optional)
+    
+    -v: Verbose output. For debugging.
 
 	You have to specify in the environment:
 	  - BORG_REPO if you haven't passed the -R flag
@@ -68,7 +73,7 @@ command -v "${DATE}" >/dev/null 2>/dev/null \
 BORG_REPO=""
 REPO_DIRS=""
 
-while getopts ":vhR:D:P:C:c:w:" opt; do
+while getopts ":vhR:D:E:P:C:c:w:" opt; do
 	case "${opt}" in
 		v)
 			verbose=$((verbose + 1))
@@ -81,6 +86,9 @@ while getopts ":vhR:D:P:C:c:w:" opt; do
 			;;
 		D)
 			REPO_DIRS=${OPTARG}
+			;;
+		E)
+			EXCLUDE_DIRS=${OPTARG}
 			;;
 		P)
 			prefix="${OPTARG}"
@@ -115,8 +123,13 @@ if [ -n "${BORG_REPO}" -a -n "${REPO_DIRS}" ] ; then
     error "Options -R and -D are mutually exclusive!"
 fi
 
+if [ -n "${BORG_REPO}" -a -n "${EXCLUDE_DIRS}" ] ; then
+    error "Options -R and -E are mutually exclusive!"
+fi
+
 [ -n "${BORG_REPO}" ] && verbose "repo ${BORG_REPO}"
 [ -n "${REPO_DIRS}" ] && verbose "repo dirs ${REPO_DIRS}" 
+[ -n "${EXCLUDE_DIRS}" ] && verbose "repo excludes ${EXCLUDE_DIRS}" 
 
 # convert values to seconds to enable comparison
 sec_warn="$(${DATE} --date="${warn}" '+%s')"
@@ -157,6 +170,12 @@ if [ -n "${BORG_REPO}" ] ; then
 else
     repo_list=`echo ${REPO_DIRS} | tr , ' ' `
     for BORG_REPO in $repo_list ; do
+        if [ -n "$EXCLUDE_DIRS" ] ; then
+        	if echo $BORG_REPO | grep -E $EXCLUDE_DIRS ; then
+        	    verbose "Skipping $BORG_REPO due to exclude pattern: $EXCLUDE_DIRS"
+                continue
+    	    fi
+    	fi
         export BORG_REPO
         check_last
     done
