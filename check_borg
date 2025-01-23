@@ -171,7 +171,7 @@ else
     repo_list=`echo ${REPO_DIRS} | tr , ' ' `
     for BORG_REPO in $repo_list ; do
         if [ -n "$EXCLUDE_DIRS" ] ; then
-        	if echo $BORG_REPO | grep -E $EXCLUDE_DIRS ; then
+        	if echo $BORG_REPO | grep -qE $EXCLUDE_DIRS ; then
         	    verbose "Skipping $BORG_REPO due to exclude pattern: $EXCLUDE_DIRS"
                 continue
     	    fi
