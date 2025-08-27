@@ -72,6 +72,7 @@ command -v "${DATE}" >/dev/null 2>/dev/null \
 
 BORG_REPO=""
 REPO_DIRS=""
+EXCLUDE_DIRS=""
 
 while getopts ":vhR:D:E:P:C:c:w:" opt; do
 	case "${opt}" in
